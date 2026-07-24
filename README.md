@@ -1,4 +1,4 @@
-# fluidic-expert-fabric: Distributed Multi-Node Multi-GPU Zero-Copy MoE Communication Fabric
+# fluidic-expert-fabric: Distributed Multi-Node Multi-GPU Zero-Copy MoE Communication Fabric (PoC)
 
 ## Introduction
 
