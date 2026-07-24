@@ -147,3 +147,12 @@ model = inject_fng_fabric_infrastructure_hook(model, fabric_adapter)
 
 ```
 
+## 📜 License
+
+```text
+Copyright (c) 2026 PJHkorea. All rights reserved.
+Licensed under the Apache License, Version 2.0 (the "License");
+```
+
+- This repository contains open-source code distributed under the **Apache License 2.0**. The full license text can be found in the `LICENSE` file.
+
