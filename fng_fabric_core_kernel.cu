@@ -1,38 +1,38 @@
-// 32바이트 정렬을 통해 L1/L2 캐시라인 일관성 문제(Stall)를 배제한 토큰 셀 구조체
+// Token cell structure aligning to 32 bytes to eliminate L1/L2 cache line coherency stalls.
 struct alignas(32) FabricIngressTokenCell {
     float features[8]; // 32 bytes (4 bytes * 8)
 };
 
-// RDMA 네트워킹을 위한 원격 노드 주소 및 권한 컨텍스트 구조체
+// Remote node address and authorization context structure configured for bare-metal RDMA networking.
 struct FabricRemoteAddressContext {
-    uint64_t remote_vram_base_ptr; // 64비트 원격 VRAM 기반 포인터
-    uint32_t remote_rkey;          // RDMA 액세스 보호 키 (InfiniBand/RoCEv2)
-    uint32_t node_rank_id;         // 클러스터 내 노드 식별자
+    uint64_t remote_vram_base_ptr; // 64-bit remote VRAM base memory address pointer
+    uint32_t remote_rkey;          // RDMA access protection steering key (InfiniBand/RoCEv2 rkey)
+    uint32_t node_rank_id;         // Cluster-wide unique node identifier
 };
 
 
-    // A. 글로벌 가속기 스레드 및 Intra-Warp 고유 레지스터 오프셋 획득
+    // A. Capture the global accelerator thread index and the intra-warp native register offset
     int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int lane_id = threadIdx.x % WARP_SIZE;
     
-    // [🛡️ SILICON RUNTIME FIREWALL]: 범위 초과 데이터의 하드웨어 단 세그폴트(SegFault) 방화벽 가동
+    // [🛡️ SILICON RUNTIME FIREWALL]: Engage the hardware-level segmentation fault firewall to trap out-of-bound data.
     bool is_valid_token = (global_idx < total_tokens);
     int target_expert = is_valid_token ? assigned_expert_ids[global_idx] : -1;
 
-    // B. 전문가 레인별 루프를 무분기(Branchless) 비트마스크 스캔으로 치환
+    // B. Transform the per-expert lane loops into completely branchless bitmask scans
     for (int e = 0; e < num_experts; ++e) {
         bool match_flag = (target_expert == e);
         
-        // 가속기 SM 소자 내부의 비동기 실행 스레드 활성 하드웨어 마스크 전사
+        // Capture the hardware execution mask of currently active asynchronous threads inside the accelerator SM
         unsigned int active_mask = __activemask();
         
-        // __ballot_sync 기계어로 워프 내 현재 전문가 조준 스레드 가닥들을 비트 필드로 1클록 집산
+        // Single-clock aggregation of target expert threads within the warp into a bitfield using the __ballot_sync intrinsic
         unsigned int expert_bitmask = __ballot_sync(active_mask, match_flag);
         
-        // [Prefix-Sum Scan] 현재 가닥(lane_id) 하방에 위치한 매칭 비트만 필터링하여 카운트 (__popc 직타)
+        // [Prefix-Sum Scan] Filter matching bits positioned below the current execution stream (lane_id) and compute via hardware __popc count
         int relative_pos = __popc(expert_bitmask & ((1U << lane_id) - 1));
 
-        // [KR] 분기 예측 실패(JMP)를 차단하기 위해 PTX 기계어 조건부 이동 명령어 selp.b32 직접 격발
+        // Directly detonate the PTX inline assembly conditional move instruction (selp.b32) to strictly eliminate branch misprediction (JMP) overhead.
         int target_slot;
         asm volatile (
             "selp.b32 %0, %1, %2, %3;"
@@ -40,73 +40,75 @@ struct FabricRemoteAddressContext {
             : "r"(relative_pos), "r"(GARBAGE_IDX), "b"(match_flag)
         );
 
-        // 정적 버케팅 임계 상한선 사양 정합성 마크 스캔
+
+               // Scan and verify specification conformity against the static bucketing threshold upper bound
         bool write_gate = (match_flag && (target_slot < tokens_per_expert));
 
         if (write_gate) {
-            // 글로벌 가상 통합 제어 평면 내부의 정적 레지스터 격자 주소선 영구 전사
+            // Permanently commit the static register grid address line inside the global virtual unified control plane
             int target_write_addr = e * tokens_per_expert + target_slot;
             fused_fabric_routing_table[target_write_addr] = global_idx;
 
             // ----------------------------------------------------------------------------
             // [🔒 ZERO-COPY ONCHIP MEMORY INGESTION ROUTE]
-            // __ldg() 고속 읽기 전용 가속 레일과 원격 RDMA 가상 포인터 오프셋 연계 마감
+            // Tie the __ldg() high-speed read-only accelerator rail with the remote RDMA virtual pointer offset
             // ----------------------------------------------------------------------------
             for (int f = 0; f < feature_dim; ++f) {
-                // 상류 PyTorch 백본 입력 스트림의 1차원 선형 물리 주소선 산출
+                // Compute the 1D linear physical memory address line of the upstream PyTorch backbone input stream
                 int src_addr = global_idx * feature_dim + f;
                 
-                // 지정된 전문가 레인 버킷 내부의 정적 레지스터 2차원 매핑 가상 주소선 산출
+                // Compute the 2D mapped virtual address line of the static register inside the designated expert lane bucket
                 int dst_addr = (e * tokens_per_expert + target_slot) * feature_dim + f;
                 
                 // [💥 HARDWARE OPTIMIZATION PRIMITIVE]
-                // __ldg 캐시 유닛을 통해 HBM 버스 뱅크의 읽기 병목 스톨을 0ns로 무력화하며 직통 쓰기 집행
+                // Bypass HBM bus bank read-bottleneck stalls down to 0ns via the __ldg cache unit, executing a direct zero-copy write
                 fused_expert_dispatched_cache[dst_addr] = __ldg(&raw_token_stream[src_addr]);
             }
         }
     }
 }
 
-// 전문가(Expert)와 토큰 슬롯(Token Slot)을 그리드(Grid) 및 스레드(Thread) 차원에 일대일(1:1) 매핑
+// Map Experts and Token Slots 1:1 onto the hardware Grid and Thread dimensions
 int expert_idx = blockIdx.x; 
 int token_slot = threadIdx.x; 
 
-// [🛡️ RUNTIME HARDWARE MASK]: SM 범위를 초과하는 스레드 조기 컷백 이탈 (하드웨어 보호)
+// [🛡️ RUNTIME HARDWARE MASK]: Early cutback and departure of threads exceeding SM boundaries (Hardware Protection Guard)
 if (expert_idx >= num_experts || token_slot >= tokens_per_expert) {
     return;
 }
 
-    // A. 정방향 디스패치 단계에서 동결 완료된 정적 격자 주소선 오프셋 산출
+
+     // A. Compute the static register grid address line offset frozen during the forward dispatch phase
     int routing_addr = expert_idx * tokens_per_expert + token_slot;
     
-    // B. 상류 PyTorch 백본 입력 스트림의 오리지널 토큰 인덱스 ID 역산 추적 복원
+    // B. Backtrack and restore the original token index ID belonging to the upstream PyTorch backbone input stream
     int original_token_idx = fused_expert_routing_table[routing_addr];
 
     // [🛡️ SYSTEM MEMORY OUT-OF-BOUNDS DEFENSE FIREWALL]
-    // 유실/가변 버케팅 패딩 및 가비지 인덱스를 원천 차단하여 세그폴트 방어
+    // Intercept dropped/variable bucketing padding and garbage indices to strictly defend against segmentation faults
     if (original_token_idx == GARBAGE_IDX || original_token_idx < 0) {
         return;
     }
 
 
-    // C. 상류 PyTorch 백본의 게이팅 확률 매트릭스로부터 고유 가중치선 참조
-    //    오리지널 토큰 인덱스와 현재 연산 전문가 인덱스에 연동 매핑됩니다.
+    // C. Reference the unique gating weight line from the upstream PyTorch backbone's gating probability matrix
+    //    This is mapped and coupled with the original token index and the current active expert index.
     float gate_weight = gating_probabilities[original_token_idx * num_experts + expert_idx];
 
     // D. 💥 [HARDWARE ATOMIC CONCURRENT STREAM MERGE LINE]
-    //    Feature 차원을 따라 원자적 실리콘 연산 장치 직타 파이프라인 가동
+    //    Engage the physical silicon execution unit direct pipeline along the feature dimension axis
     for (int f = 0; f < feature_dim; ++f) {
-        // 현재 전문가 레인 버킷 내부의 1차원 선형 소스 주소선 산출
+        // Compute the 1D linear source address line inside the current expert lane bucket
         int src_addr = (expert_idx * tokens_per_expert + token_slot) * feature_dim + f;
         
-        // 상류 PyTorch 백본 입력 스트림의 원본 시퀀스 축 복귀 타겟 주소선 산출
+        // Compute the target destination address line to return to the original sequence axis of the upstream PyTorch backbone input stream
         int dst_addr = original_token_idx * feature_dim + f;
         
-        // 게이팅 가중치를 곱해 대수적 아다마르 연산 수행
+        // Execute algebraic Hadamard product multiplication by applying the gating weight
         float weighted_value = expert_outputs[src_addr] * gate_weight;
         
         // [💥 HARDWARE ATOMIC PRIMITIVE]
-        // NCCL All-to-All 통신 병목을 소멸시키고 Write Race Condition을 하드웨어 수준에서 평탄화
+        // Annihilate NCCL All-to-All communication bottlenecks and flatten write race conditions directly at the hardware silicon level
         atomicAdd(&reconstructed_stream[dst_addr], weighted_value);
     }
 }
