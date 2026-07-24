@@ -6,6 +6,20 @@
 
 ---
 
+## 🌌 Low-Level Hardware Co-Design Infrastructure Suite
+
+A collection of bare-metal, communication-free co-design infrastructures designed to break through the physical constraints of heterogeneous framework runtimes, accelerator memory interconnect bandwidths, and HBM memory subsystem stalls.
+
+### 🛠️ Core Weaponry Assets & Sovereign Repositories
+
+*   **`Fluidic_Network_Grid` (FNG)**: A macro-level traffic bus and tensor virtualization bridge orchestrating zero-copy data routing across JAX SPMD sharding architectures and PyTorch autograd lanes.
+*   **`pim-hbm-bypass`**: A bare-metal runtime engine leveraging PIM bank activation and CUDA memory virtualization primitives to enforce deterministic fault-tolerance and dynamic rank-hot-swapping under HBM bank failure states.
+*   **`pim-moe-core`**: A low-level branchless MUX core kernel and automatic differentiation bridge utilizing atomic scatter-add hardware instructions to completely bypass local framework wrapping overheads in Sparse MoE networks.
+*   **`fluidic-expert-fabric`**: The macro-scale culmination of our infrastructure suite, scaling virtual address-stride swapping directly onto distributed RDMA (RoCEv2) inter-node fabric lines to fundamentally neutralize NCCL All-to-All communication stalls under dynamic dynamic sequence flows.
+
+
+---
+
 ## Core Technical Innovations
 
 ### 1. Multi-Node Quantum Address Swapping
