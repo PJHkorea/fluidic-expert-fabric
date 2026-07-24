@@ -1,5 +1,5 @@
 # [PIM-HBM ZERO-COPY HARDWARE MoE CORE INFRASTRUCTURE - V1.0]
-# [PART 1/3]: Macro-Level Topology Control Tower & Zero-Copy Sharded View Base
+
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
