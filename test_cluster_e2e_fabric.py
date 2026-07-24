@@ -1,7 +1,6 @@
 # ====================================================================
 # [PIM-HBM ZERO-COPY HARDWARE MoE CORE INFRASTRUCTURE - V1.0]
 # @file: test_cluster_e2e_fabric.py
-# [PART 1/1]: Multi-Node End-to-End Numerical Integrity & Autograd Test
 # ====================================================================
 
 import torch
