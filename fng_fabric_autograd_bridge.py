@@ -11,14 +11,15 @@ from jax.dlpack import to_dlpack as jax_to_dlpack
 from jax.dlpack import from_dlpack as jax_from_dlpack
 from typing import Tuple, Any
 
-# 상위 글로벌 네트워크 패브릭 사양서 상수 연동 상속
+# Inherit and link constants from the upper-level global network fabric specification
 from fng_fabric_config import NUM_EXPERTS, FEATURE_DIM
 
 class FngFabricAutogradBridgeFunction(torch.autograd.Function):
     """
     [GLOBAL FABRIC MULTI-NODE INTERLOCK FUNCTION]
-    파이토치 C++ Autograd 시스템 내부에 JAX/XLA SPMD 분산 VJP 연산 장치를
-    0바이트 복사 프로토콜(DLPack Dual-Pointer Hijacking)로 주입하는 양방향 가상화 교량입니다.
+    A bidirectional virtualization bridge that injects the JAX/XLA SPMD distributed 
+    Vector-Jacobian Product (VJP) engine directly into PyTorch's C++ Autograd system, 
+    utilizing a zero-byte copy protocol (DLPack Dual-Pointer Hijacking).
     """
     
     @staticmethod
@@ -32,26 +33,27 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         tokens_per_expert: int
     ) -> torch.Tensor:
         """
-        [📢 FORWARD DISPATCH INTERLOCK]: 파이토치 VRAM 물리 기저 주소를 JAX 분산 버스로 수입
+        [📢 FORWARD DISPATCH INTERLOCK]: Import PyTorch VRAM physical base addresses into the JAX distributed bus.
         """
-        # [🛡️ HARDWARE CONTIGUITY DEFENSE]: 분산 메모리 정렬의 연속성이 깨져 발생하는 수치 폭주 선제 차단
+        # [🛡️ HARDWARE CONTIGUITY DEFENSE]: Preemptively intercept numerical explosion triggered by broken continuity in distributed memory alignment.
         if not hidden_states.is_contiguous():
             hidden_states = hidden_states.contiguous()
         if not gate_logits.is_contiguous():
             gate_logits = gate_logits.contiguous()
 
-        # 역방향 오차 전파 단열 터널 구동용 파라미터 컨텍스트 박제
+
+              # Freeze and stash the parameter context required to drive the backward error propagation insulated tunnel
         ctx.sharding_tower = sharding_tower
         ctx.mesh = mesh
         ctx.bucket_size = bucket_size
         ctx.tokens_per_expert = tokens_per_expert
 
-        # [🔒 0-COPY INTER-FRAMEWORK INGESTION]: DLPack 표준 바인딩을 통해 복사 레이턴시 영점화
-        # 파이토치가 소유한 가속기 물리 주소선을 JAX 분산 디바이스 어레이 변수로 무복사 직통 전사합니다.
+        # [🔒 0-COPY INTER-FRAMEWORK INGESTION]: Achieve absolute zero copy-latency through DLPack standard bindings.
+        # Direct zero-copy mapping of the hardware memory address lines owned by PyTorch straight into JAX distributed device array variables.
         jax_tokens = jax_from_dlpack(to_dlpack(hidden_states))
         jax_logits = jax_from_dlpack(to_dlpack(gate_logits))
 
-        # [🌀 DISTRIBUTED JAX VJP ENGAGEMENT]: 정방향 출력 사출과 동시에 역방향 미분 기계어 주소선(_fabric_vjp_fn) 포획
+        # [🌀 DISTRIBUTED JAX VJP ENGAGEMENT]: Emit forward outputs while simultaneously capturing the backward differential machine address pointer (_fabric_vjp_fn).
         with mesh:
             jax_outputs, fabric_vjp_fn = jax.vjp(
                 lambda h, g: sharding_tower.parallel_fabric_dispatch_routing(h, g, bucket_size, tokens_per_expert),
@@ -59,66 +61,70 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
                 jax_logits
             )
             
-        # [🔒 EXTENDED LIFE-CYCLE GUARD]: 비동기 가비지 컬렉터(GC)의 조기 주소 파손을 방어하기 위한 레지스터 홀딩
+        # [🔒 EXTENDED LIFE-CYCLE GUARD]: Hold register references to shield against premature address corruption by the asynchronous Garbage Collector (GC).
         ctx.fabric_vjp_fn = fabric_vjp_fn
         ctx.save_for_backward(hidden_states, gate_logits)
 
-        # 정제 완결된 JAX 글로벌 분산 아웃풋 다양체를 다시 파이토치 VRAM 공간으로 0바이트 복사 회수 토출
+        # Retrieve and discharge the finalized JAX global distributed output manifold back into the PyTorch VRAM space via zero-byte copy.
         torch_outputs = from_dlpack(jax_to_dlpack(jax_outputs))
         return torch_outputs
 
 
-    @staticmethod
+
+       @staticmethod
     def backward(ctx: Any, grad_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, None, None, None, None]:
         """
-        [📢 BACKWARD PARALLEL COMBINE]: 단열 백프로파게이션 터널(Adiabatic Backpropagation Tunnel) 가동
-        상류 파이토치 Autograd 미분 체인과 하방 JAX SPMD VJP 주소선을 무복사 직결합니다.
+        [📢 BACKWARD PARALLEL COMBINE]: Engage the adiabatic backpropagation tunnel.
+        Directly interconnects the upstream PyTorch Autograd differentiation chain 
+        with the downstream JAX SPMD VJP address lines using a zero-copy protocol.
         """
-        # [🛡️ HARDWARE CONTIGUITY DEFENSE]: 오차 전파 벡터 행렬의 물리 정렬 연속성 보존
+        # [🛡️ HARDWARE CONTIGUITY DEFENSE]: Preserve physical alignment continuity of the backpropagation error vector matrix.
         if not grad_output.is_contiguous():
             grad_output = grad_output.contiguous()
 
-        # 정방향 패스 통과 시점에 컨텍스트(ctx) 내부에 영구 박제해 둔 XLA VJP 기계어 주소선 및 토폴로지 사양 로드
+        # Load the XLA VJP machine address pointer and topology specifications permanently stashed inside the context (ctx) during the forward pass.
         fabric_vjp_fn = ctx.fabric_vjp_fn
         sharding_tower = ctx.sharding_tower
         mesh = ctx.mesh
         bucket_size = ctx.bucket_size
         tokens_per_expert = ctx.tokens_per_expert
         
-        # [🔒 ZERO-COPY POINTER HIJACKING]: 인입된 상류 파이토치 오차 행렬의 가속기 주소선을 DLPack으로 하이재킹
+        # [🔒 ZERO-COPY POINTER HIJACKING]: Hijack the hardware memory address lines of the incoming upstream PyTorch error matrix via DLPack.
         jax_grad_output = jax_from_dlpack(to_dlpack(grad_output))
 
         # [💥 HARDWARE NATIVE ATOMIC INTENSIVE RUNTIME]
-        # XLA VJP 역산 관류를 기폭하여, 하방 C++ 커널의 atomicAdd() 실리콘 기계어 트랙 위로 그라디언트를 조준 사격합니다.
+        # Detonate the XLA VJP inverse flow, targeting and firing gradients directly onto the atomicAdd() silicon machine tracks of the underlying C++ kernel.
         with mesh:
-            # 샤딩 타워의 거울 대칭형 parallel_fabric_combine_routing 연산 유닛과 상호 융합 인터록
+            # Mutual fusion interlock with the mirror-symmetric parallel_fabric_combine_routing compute unit of the sharding tower
             grad_hidden, grad_logits = fabric_vjp_fn(
                 sharding_tower.parallel_fabric_combine_routing(
                     jax_grad_output, 
-                    jax_from_dlpack(to_dlpack(ctx.saved_tensors[1])), # gate_logits 토큰 매핑 데이터 복원 수입
+                    jax_from_dlpack(to_dlpack(ctx.saved_tensors[1])), # Import and restore gate_logits token mapping data
                     bucket_size, 
                     tokens_per_expert
                 )
             )
 
         # [🛡️ LINEAR INTERCONNECT ALIGNMENT FENCE]
-        # 미분 대상이 아닌 인자 축(sharding_tower, mesh, bucket_size, tokens_per_expert)의 사양 서열에 정확히 대응하여
-        # 파이토치 C++ Autograd 엔진이 요구하는 명시적 'None' 패딩 반환 마킹 규격을 수호합니다.
+        # Align perfectly with the specification sequence of non-differentiable argument axes (sharding_tower, mesh, bucket_size, tokens_per_expert)
+        # to satisfy and enforce the explicit 'None' padding return signature required by the PyTorch C++ Autograd engine.
         torch_grad_hidden = from_dlpack(jax_to_dlpack(grad_hidden))
         torch_grad_logits = from_dlpack(jax_to_dlpack(grad_logits))
 
         return torch_grad_hidden, torch_grad_logits, None, None, None, None
 
 
+
 class FngFabricAutogradBridge:
     """
     [HIGH-LEVEL CO-DESIGN FABRIC INTERFACE]
-    실제 상용 LLM 백본 모델(Mixtral / DeepSeek-V3)의 런타임 몽키 패치 주입 단에서
-    가상 MUX 제어 평면을 손쉽게 트리거할 수 있도록 직관적인 호출 규격을 제공하는 인프라 래퍼입니다.
+    An infrastructure wrapper providing an intuitive invocation signature to easily trigger 
+    the virtual MUX control plane within the runtime monkey-patch injection layer 
+    of commercial-grade backbone LLMs (e.g., Mixtral / DeepSeek-V3).
     """
     def __init__(self, sharding_tower: Any, mesh: Any, bucket_size: int, tokens_per_expert: int):
         """
-        다중 노드 거시 관제탑 및 가속기 토폴오지 토큰 슬롯 사양 상속 앵커링
+        Anchor and inherit multi-node macro control tower and accelerator topology token slot specifications.
         """
         self.sharding_tower = sharding_tower
         self.mesh = mesh
@@ -128,7 +134,8 @@ class FngFabricAutogradBridge:
     def __call__(self, hidden_states: torch.Tensor, gate_logits: torch.Tensor) -> torch.Tensor:
         """
         [⚡ INLINE INFRASTRUCTURE GATEWAY]
-        상류 파이토치 forward 루프가 인입되는 순간, 하부 0-Copy 단열 자동미분 터널을 기폭합니다.
+        The exact moment the upstream PyTorch forward loop inputs, detonate the underlying 
+        0-Copy adiabatic automatic differentiation tunnel.
         """
         return FngFabricAutogradBridgeFunction.apply(
             hidden_states, 
