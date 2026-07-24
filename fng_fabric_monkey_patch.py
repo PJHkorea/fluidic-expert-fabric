@@ -11,44 +11,46 @@ from fng_fabric_dynamic_adapter import FngFabricDynamicShapeAdapter
 def _patched_fabric_mixtral_moe_forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     [📢 INJECTED METHOD: MIXTRAL]
-    오리지널 MixtralSparseMoeBlock.forward 연산을 완전히 하이재킹하여,
-    레거시 멀티 노드 랙 간의 All-to-All 통신 라인을 물리적으로 도살하고 
-    글로벌 가상 주소 MUX 패브릭 제어 평면으로 우회시킵니다.
+    Completely hijacks the original MixtralSparseMoeBlock.forward execution path 
+    to physically eliminate the legacy multi-node rack-to-rack All-to-All communication lines, 
+    rerouting the tensor stream into the global virtual address MUX fabric control plane.
     """
-    # 허깅페이스 오리지널 게이팅 로짓 추출부 규격과 1:1 정합
+    # Maintain a strict 1:1 architectural compliance with the original Hugging Face gating logit extraction block
     gate_logits = self.gate(hidden_states)
     
-    # 런타임에 동적으로 매핑된 다중 노드 가속기 친화형 정적 버킷 어댑터 기폭
+    # Detonate the runtime dynamically-mapped, multi-node accelerator-friendly static bucket adapter
     final_output = self.fng_fabric_hardware_adapter(hidden_states, gate_logits)
     
-    # 상위 트랜스포머 디코더 레이어가 오작동하지 않도록 (output, gate_logits) 오리지널 반환 규격 완벽 사수
+    # Defend and preserve the original return signature (output, gate_logits) to safeguard upstream transformer decoder layers against functional failure
     return final_output, gate_logits
 
 
 def _patched_fabric_deepseek_moe_forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
     """
     [📢 INJECTED METHOD: DEEPSEEK-V3]
-    Mixtral과 기하학적 형상이 다른 DeepSeek-V3 고유의 다중 전문가 게이팅 블록(DeepSeekMoE)용 포워드 패치입니다.
+    Forward execution path patch configured specifically for DeepSeek-V3's unique multi-expert gating block (DeepSeekMoE), 
+    which possesses a distinctly different geometric topology compared to Mixtral.
     """
-    # DeepSeek-V3 고유의 게이트 텐서 추출 컨텍스트 모사
+    # Replicate the specific gate tensor extraction context native to DeepSeek-V3
     if hasattr(self, "gate"):
         gate_logits = self.gate(hidden_states)
     else:
-        # 가중치 텐서로부터 직접 사출하는 서브 모듈 예외 마스킹 처리
+        # Mask exception paths directly projecting from raw weight tensors
         gate_logits = torch.matmul(hidden_states, self.gate_weight)
 
-    # 0ns 다중 노드 글로벌 가상 주소 MUX 패브릭 관류 연산 집행
+    # Execute the 0ns multi-node global virtual address MUX fabric interlock computation stream
     torch_dispatched_out = self.fng_fabric_hardware_adapter(hidden_states, gate_logits)
     
-    # DeepSeek-V3 특성에 맞춘 VRAM 복사 비용 0바이트 가상 뷰 재정렬 마감
+    # Finalize the virtual view realignment with an absolute 0-byte VRAM memory copy cost tailored to DeepSeek-V3 specifications
     return torch_dispatched_out.view_as(hidden_states)
 
 
 def inject_fng_fabric_infrastructure_hook(model: torch.nn.Module, adapter: FngFabricDynamicShapeAdapter) -> torch.nn.Module:
     """
     [⚡ HIGH-LEVEL MACRO INJECTION FACTORY]
-    주입된 상용 멀티 노드 분산 파이토치 모델 전체를 스캔하여 Mixtral 및 DeepSeek-V3의 핵심 MoE 라우팅 레이어를 포획하고,
-    CPython VM 단에서 0ns 오버헤드로 다중 노드 하드웨어 패브릭 인터록 훅을 다이렉트 바인딩 완수합니다.
+    Scans the entire injected commercial multi-node distributed PyTorch model to capture 
+    the core MoE routing layers of Mixtral and DeepSeek-V3, fully achieving a direct binding 
+    of the multi-node hardware fabric interlock hook with 0ns overhead at the CPython VM level.
     """
     print("====================================================================")
     print("🐒 SCANNING MULTI-NODE INFRASRUCTURE TARGETS FOR MONKEY PATCH...")
@@ -56,21 +58,21 @@ def inject_fng_fabric_infrastructure_hook(model: torch.nn.Module, adapter: FngFa
     
     patched_count = 0
     
-    # 모델 내부의 모든 서브 모듈 계통 레이어를 정밀 추적 조준
+    # Trace and target all sub-module hierarchical layers inside the backbone model with high precision
     for name, module in model.named_modules():
         module_class_name = module.__class__.__name__
         
-        # 1) Mixtral-8x7B 코어 라우터 타깃 검출 시
+        # 1) When the Mixtral-8x7B core router target is detected
         if module_class_name == "MixtralSparseMoeBlock":
-            # 다중 노드 가속기 사전 동결 어댑터 인스턴스를 서브 모듈 내부에 앵커링 고정
+            # Anchor and lock the multi-node accelerator pre-frozen adapter instance inside the sub-module
             module.fng_fabric_hardware_adapter = adapter
             
-            # types.MethodType 바인딩을 가동하여 런타임 실행 함수 주소선을 0ns만에 리다이렉션 스왑
+            # Leverage types.MethodType binding to instantly swap and redirect the runtime execution function address line within 0ns
             module.forward = types.MethodType(_patched_fabric_mixtral_moe_forward, module)
             patched_count += 1
             print(f"   ├─ [FABRIC HOOK INJECTED] Target: {name} ({module_class_name}) ➔ MUX Fabric Applied.")
             
-        # 2) DeepSeek-V3 다중 전문가 타깃 검출 시
+        # 2) When the DeepSeek-V3 multi-expert target is detected
         elif module_class_name in ["DeepSeekMoE", "DeepSeekSparseMoeBlock"]:
             module.fng_fabric_hardware_adapter = adapter
             module.forward = types.MethodType(_patched_fabric_deepseek_moe_forward, module)
