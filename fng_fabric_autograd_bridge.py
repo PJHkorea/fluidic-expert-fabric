@@ -22,7 +22,7 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
     utilizing a zero-byte copy protocol (DLPack Dual-Pointer Hijacking).
     """
     
-    @staticmethod
+        @staticmethod
     def forward(
         ctx: Any, 
         hidden_states: torch.Tensor, 
@@ -36,22 +36,25 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         [📢 FORWARD DISPATCH INTERLOCK]: Import PyTorch VRAM physical base addresses into the JAX distributed bus.
         """
         # [🛡️ HARDWARE CONTIGUITY DEFENSE]: Preemptively intercept numerical explosion triggered by broken continuity in distributed memory alignment.
-        if not hidden_states.is_contiguous():
+        if not hidden_states.is_contiguous(): [[unlikely]]
             hidden_states = hidden_states.contiguous()
-        if not gate_logits.is_contiguous():
+        if not gate_logits.is_contiguous(): [[unlikely]]
             gate_logits = gate_logits.contiguous()
 
-
-              # Freeze and stash the parameter context required to drive the backward error propagation insulated tunnel
+        # Freeze and stash the parameter context required to drive the backward error propagation insulated tunnel
         ctx.sharding_tower = sharding_tower
         ctx.mesh = mesh
         ctx.bucket_size = bucket_size
         ctx.tokens_per_expert = tokens_per_expert
 
-        # [🔒 0-COPY INTER-FRAMEWORK INGESTION]: Achieve absolute zero copy-latency through DLPack standard bindings.
-        # Direct zero-copy mapping of the hardware memory address lines owned by PyTorch straight into JAX distributed device array variables.
-        jax_tokens = jax_from_dlpack(to_dlpack(hidden_states))
-        jax_logits = jax_from_dlpack(to_dlpack(gate_logits))
+        # [🔒 0-COPY INTER-FRAMEWORK INGESTION]: Achieve absolute zero copy-latency through Safe DLPack standard bindings.
+        # [★GC 방어 핵심★] DLPack 캡슐 객체들을 임시 인자가 아닌 명시적 로컬 변수(capsule_*)로 단단히 결착(Pinning)하여,
+        # 하부 가속기 비동기 분산 연산이 완전히 완결될 때까지 하드웨어 64비트 메모리 주소선이 강제 회수당하는 크래시를 원천 차단합니다.
+        capsule_tokens = to_dlpack(hidden_states)
+        capsule_logits = to_dlpack(gate_logits)
+        
+        jax_tokens = jax_from_dlpack(capsule_tokens)
+        jax_logits = jax_from_dlpack(capsule_logits)
 
         # [🌀 DISTRIBUTED JAX VJP ENGAGEMENT]: Emit forward outputs while simultaneously capturing the backward differential machine address pointer (_fabric_vjp_fn).
         with mesh:
@@ -65,13 +68,20 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         ctx.fabric_vjp_fn = fabric_vjp_fn
         ctx.save_for_backward(hidden_states, gate_logits)
 
-        # Retrieve and discharge the finalized JAX global distributed output manifold back into the PyTorch VRAM space via zero-byte copy.
-        torch_outputs = from_dlpack(jax_to_dlpack(jax_outputs))
+        # [★출력 캡슐 안전 격리★] JAX의 가속 완료 어레이 결과를 파이토치 레일로 토스할 때도 
+        # 가상 캡슐 핸들(capsule_out)의 스코프 보존선을 구축하여 비동기 데이터 오염 및 누수를 완벽히 청소합니다.
+        capsule_out = jax_to_dlpack(jax_outputs)
+        torch_outputs = from_dlpack(capsule_out)
+        
+        # 파이토치 런타임 엔진이 가속 결과를 안전하게 인지하도록 이종 가속기 스트림에 소유권 연동 마크를 결착합니다.
+        torch.cuda.current_stream().record_stream(torch_outputs)
+        
         return torch_outputs
 
 
 
-       @staticmethod
+
+        @staticmethod
     def backward(ctx: Any, grad_output: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, None, None, None, None]:
         """
         [📢 BACKWARD PARALLEL COMBINE]: Engage the adiabatic backpropagation tunnel.
@@ -79,7 +89,7 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         with the downstream JAX SPMD VJP address lines using a zero-copy protocol.
         """
         # [🛡️ HARDWARE CONTIGUITY DEFENSE]: Preserve physical alignment continuity of the backpropagation error vector matrix.
-        if not grad_output.is_contiguous():
+        if not grad_output.is_contiguous(): [[unlikely]]
             grad_output = grad_output.contiguous()
 
         # Load the XLA VJP machine address pointer and topology specifications permanently stashed inside the context (ctx) during the forward pass.
@@ -89,29 +99,42 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         bucket_size = ctx.bucket_size
         tokens_per_expert = ctx.tokens_per_expert
         
-        # [🔒 ZERO-COPY POINTER HIJACKING]: Hijack the hardware memory address lines of the incoming upstream PyTorch error matrix via DLPack.
-        jax_grad_output = jax_from_dlpack(to_dlpack(grad_output))
+        # [🔒 ZERO-COPY POINTER HIJACKING]: 
+        # [★GC 방어 및 핀 고정★] 역방향 오차 행렬의 임시 캡슐을 명시적 로컬 변수로 확보하여 가속기 비동기 VJP 연산 도중 메모리가 날아가는 것을 원천 방어합니다.
+        capsule_grad_in = to_dlpack(grad_output)
+        capsule_saved_logits = to_dlpack(ctx.saved_tensors[1])
+        
+        jax_grad_output = jax_from_dlpack(capsule_grad_in)
+        jax_saved_logits = jax_from_dlpack(capsule_saved_logits)
 
         # [💥 HARDWARE NATIVE ATOMIC INTENSIVE RUNTIME]
-        # Detonate the XLA VJP inverse flow, targeting and firing gradients directly onto the atomicAdd() silicon machine tracks of the underlying C++ kernel.
         with mesh:
             # Mutual fusion interlock with the mirror-symmetric parallel_fabric_combine_routing compute unit of the sharding tower
             grad_hidden, grad_logits = fabric_vjp_fn(
                 sharding_tower.parallel_fabric_combine_routing(
                     jax_grad_output, 
-                    jax_from_dlpack(to_dlpack(ctx.saved_tensors[1])), # Import and restore gate_logits token mapping data
+                    jax_saved_logits, 
                     bucket_size, 
                     tokens_per_expert
                 )
             )
 
         # [🛡️ LINEAR INTERCONNECT ALIGNMENT FENCE]
-        # Align perfectly with the specification sequence of non-differentiable argument axes (sharding_tower, mesh, bucket_size, tokens_per_expert)
-        # to satisfy and enforce the explicit 'None' padding return signature required by the PyTorch C++ Autograd engine.
-        torch_grad_hidden = from_dlpack(jax_to_dlpack(grad_hidden))
-        torch_grad_logits = from_dlpack(jax_to_dlpack(grad_logits))
+        # [★반환 캡슐 안전 격리★] 복귀하는 그래디언트 데이터 역시 캡슐화 생명주기를 완벽히 고정하여 데이터 수치 오염을 원천 차단합니다.
+        capsule_grad_hidden = jax_to_dlpack(grad_hidden)
+        capsule_grad_logits = jax_to_dlpack(grad_logits)
+        
+        torch_grad_hidden = from_dlpack(capsule_grad_hidden)
+        torch_grad_logits = from_dlpack(capsule_grad_logits)
+
+        # [★이종 스트림 배리어 체결★]
+        # 파이토치 Autograd 엔진이 이 반환된 그래디언트를 안전하게 참조하여 가중치를 업데이트할 수 있도록 스트림 락을 결착합니다.
+        current_stream = torch.cuda.current_stream()
+        current_stream.record_stream(torch_grad_hidden)
+        current_stream.record_stream(torch_grad_logits)
 
         return torch_grad_hidden, torch_grad_logits, None, None, None, None
+
 
 
 
