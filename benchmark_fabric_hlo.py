@@ -23,12 +23,12 @@ def compile_and_dump_pure_fabric_hlo_asm(bucket_size: int, tokens_per_expert: in
     """
     from jax.sharding import NamedSharding, PartitionSpec as P
 
-    # ❶ 하부 ShardMap 인프라가 요구하는 "data_parallel" 축 기반의 정밀 분산 명세를 생성합니다.
+    # ❶ Generates precision sharding topologies based on the "data_parallel" axis required by the underlying ShardMap infrastructure.
     dp_sharding = NamedSharding(mesh, P("data_parallel", None))
 
-    # ❷ [★분산 축 누수 교정 핵심★]: 단순 추상 어레이 구조에 sharding=dp_sharding 속성을 강제 결착(Pinning)합니다.
-    # 이로 인해 가속기 VRAM 메모리를 0MB로 유지하면서도, JAX 컴파일러가 "물리 분산 레이아웃이 완전히 정렬된 데이터"로
-    # 정적 인지하여 In/Out Specs 미스매치 컴파일 브레이크 요인을 100% 진압합니다.
+    # ❷ [★ CRITICAL DISTRIBUTED AXIS LEAK COMPENSATOR ★]: Forcibly pins the sharding=dp_sharding attribute directly onto the abstract array geometry.
+    # This maintains the active VRAM footprint at absolute 0MB, while coercing the JAX compiler to recognize the structure as an inherently aligned 
+    # physical distribution layout, systematically crushing In/Out Specs mismatch graph breaks.
     abstract_token_stream = jax.ShapeDtypeStruct(
         shape=(bucket_size, FEATURE_DIM), 
         dtype=jnp.float32,
@@ -39,6 +39,7 @@ def compile_and_dump_pure_fabric_hlo_asm(bucket_size: int, tokens_per_expert: in
         dtype=jnp.float32,
         sharding=dp_sharding
     )
+
 
     # ❸ Target downstream algebraic Mux hardware-bound pipeline factory to validate.
     hardware_pass_kernel = mock_fabric_core_pipeline_factory(
@@ -57,8 +58,8 @@ def compile_and_dump_pure_fabric_hlo_asm(bucket_size: int, tokens_per_expert: in
             abstract_gate_logits
         )
         
-        # [★컴파일러 호환성 마감★]: lowered 단계의 HLO IR 도메인 모듈을 직접 파싱하거나
-        # 최신 컴파일 바이너리 텍스트 릴리즈 규격에 맞추어 문자열 변환 경로를 견고하게 일치시킵니다.
+            # [★ COMPILER COMPATIBILITY BOUNDARY FINALIZATION ★]: Directs the parsing of the lowered HLO IR domain module, 
+        # or rigidly aligns the string serialization pathway to comply with the latest compiled binary text release specifications.
         compiled_executable = lowered_hlo_graph.compile()
 
     # Decode and return the machine bytecode hidden behind the compiler veil into human-readable pure text.
@@ -74,22 +75,24 @@ def audit_compiled_silicon_fabric_instructions(hlo_assembly_text: str) -> Dict[s
     representation assembly to detect the leakage of collective communication and sorting 
     instructions that induce hardware pipeline stalls.
     """
-    # ❶ [★오탐지/누수 교정 핵심★]: 하이픈(-)과 언더바(_)를 동시에 정밀 인터셉트하는 
-    # 와일드카드 정규식 패턴으로 보강하여 XLA 컴파일러 고유 매글링 명세를 100% 잡아냅니다.
+    # ❶ [★ CRITICAL FALSE-POSITIVE & AXIS LEAK PROTECTOR ★]: Reinforced with a robust wildcard regex pattern 
+    # designed to concurrently intercept both hyphens (-) and underscores (_) with maximum precision, 
+    # capturing 100% of the XLA compiler's unique native name-mangling specifications.
     collective_comm_patterns = [
         r"all[-_]to[-_]all",
         r"collective[-_]permute",
         r"all[-_]gather",
         r"reduce[-_]scatter",
-        r"\bsend\b", # 독립 단어로 격리하여 오탐지 차단
+        r"\bsend\b", # Isolated as an independent whole word to completely eliminate false-positive detection vectors
         r"\brecv\b"
     ]
 
-    # ❷ [★가짜 에러 격리 교정★]: 일반 명칭(sorted_axis 등)에 반응하지 않도록, 
-    # HLO IR 인스트럭션 제어선 명세(예: 주석 부근의 = sort(...) 형태나 바이트코드 진입점)를 조준합니다.
+
+       # ❷ [★ DETERTMINISTIC FALSE-POSITIVE ISOLATION & EXCLUSION ★]: To prevent errant triggering on standard identifiers (e.g., sorted_axis), 
+    # surgically targets the explicit HLO IR instruction control-line specifications (e.g., the exact = sort(...) bytecode ingress pattern).
     sorting_patterns = [
         r"custom[-_]call.*bitonic",
-        r"\bsort\s*\("  # 실제 sort( 연산 명령어 구조만 핀포인트 타겟팅
+        r"\bsort\s*\("  # Pins execution vectors down to actual native sort() operation structures alone
     ]
 
     detected_comm_primitives = {}
@@ -97,6 +100,7 @@ def audit_compiled_silicon_fabric_instructions(hlo_assembly_text: str) -> Dict[s
     
     total_comm_leaks = 0
     total_sorting_leaks = 0
+
 
     # A. Target scan for collective communication primitives (Case-Insensitive)
     for pattern in collective_comm_patterns:
@@ -138,10 +142,11 @@ def run_fabric_hlo_static_assembly_benchmark() -> None:
     print("🔍 IGNITING MULTI-NODE FABRIC XLA HLO ASSEMBLY PROFILER...")
     print("====================================================================")
 
-    # A. Setup the multi-node distributed virtual mesh topology properly aligned with the sharding tower
-    # [★축 이름 및 장치 슬라이싱 교정★]: 
-    # FngFabricShardingTower의 assert 배리어를 통과하고, 대규모 분산 축 연산의 차원 랭크가 
-    # 무결하게 추적되도록 축 명칭을 'expert_fabric'으로 일치시키고 전체 디바이스 풀을 융합합니다.
+      # A. Setup the multi-node distributed virtual mesh topology properly aligned with the sharding tower
+    # [★ CRITICAL SHARDING AXIS & DEVICE SLICING ALIGNMENT ★]: 
+    # Standardizes the mesh axis identity explicitly as 'expert_fabric' and fuses the entire physical device pool, 
+    # deterministically passing the FngFabricShardingTower validation assert barriers and preserving the multi-node 
+    # dimensional tensor rank tracking loop without numerical degradation.
     devices = jax.devices()
     mock_mesh = Mesh(jnp.array(devices), ("expert_fabric",))
     print(f"[FABRIC_PROFILER_BOOT] Device sharding topology mesh locked: {mock_mesh}")
