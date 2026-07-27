@@ -15,23 +15,23 @@ def _patched_fabric_mixtral_moe_forward(self, hidden_states: torch.Tensor) -> Tu
     to physically eliminate the legacy multi-node rack-to-rack All-to-All communication lines, 
     rerouting the tensor stream into the global virtual address MUX fabric control plane.
     """
-    # ❶ 기존 Hugging Face 게이팅 로직 추출 블록과의 1:1 아키텍처적 일치성 유지
+    # ❶ Maintains strict 1:1 architectural alignment with the legacy Hugging Face gating extraction logic block.
     gate_logits = self.gate(hidden_states)
     
-    # ❷ 하부 C++ 백엔드 및 JAX 분산 타워 연산 규격을 통과하기 위해 입구 연속성 가드를 결착합니다.
+    # ❷ Implants an ingress continuity guard to rigorously satisfy the lower-level C++ backend and JAX distributed tower validation specifications.
     if not hidden_states.is_contiguous(): [[unlikely]]
         hidden_states = hidden_states.contiguous()
     
-    # ❸ 정적 버킷 어댑터를 기동하여 0ns 무복사 가속 연산을 수행합니다.
+    # ❸ Deploys the static bucket adapter to execute zero-copy, zero-overhead acceleration routines.
     final_output_2d = self.fng_fabric_hardware_adapter(hidden_states, gate_logits)
     
-    # [★차원 유실 교정 핵심★]
-    # 하부 정적 타워가 뱉어낸 2D 평탄화 매트릭스를 미스트랄 본래의 3D [Batch, Seq_Len, Feature_Dim] 
-    # 기하학적 토폴로지 구조 규격으로 오버헤드 0바이트 상태를 유지하며 원터치 복원(view_as)합니다.
-    # 이로 인해 후속 디코더 레이어와의 데이터 버스 차원 정합성이 100% 확보됩니다.
+    # [★ CRITICAL DIMENSIONAL LOSS COMPENSATOR ★]:
+    # Restores the 2D flattened matrix emitted by the lower static tower back into Mixtral's native 3D [Batch, Seq_Len, Feature_Dim] 
+    # geometric topology spec via a one-touch view_as layout reinterpretation, maintaining a strict 0-byte memory optimization footprint.
+    # This guarantees 100% data bus dimensional alignment and integrity with downstream decoder layers.
     final_output_3d = final_output_2d.view_as(hidden_states)
     
-    # ❹ 파이토치 Inductor 컴파일러가 역전파 미분 체인을 놓치지 않도록 강제 동기화 플래그를 결착합니다.
+    # ❹ Attaches a deterministic synchronization flag to enforce the PyTorch Inductor compiler to capture the backward differential chain flawlessly.
     if torch.is_grad_enabled() and hasattr(final_output_3d, "requires_grad_"):
         final_output_3d.requires_grad_(hidden_states.requires_grad)
     
@@ -45,31 +45,32 @@ def _patched_fabric_deepseek_moe_forward(self, hidden_states: torch.Tensor) -> t
     Forward execution path patch configured specifically for DeepSeek-V3's unique multi-expert gating block (DeepSeekMoE), 
     which possesses a distinctly different geometric topology compared to Mixtral.
     """
-    # ❶ DeepSeek-V3/V4 원본 게이팅 텐서 추출 컨텍스트 규격 무결 복제
+    # ❶ Replicates the exact gating tensor extraction context layout native to DeepSeek-V3/V4 with absolute integrity.
     if hasattr(self, "gate"):
         gate_logits = self.gate(hidden_states)
     else:
-        # 가중치 텐서로부터 다이렉트 프로젝션 예외 패스 마스킹
+        # Bypasses via an emergency fallback masking pathway executing direct projection from the weight tensor matrix.
         gate_logits = torch.matmul(hidden_states, self.gate_weight)
 
-    # ❷ 하부 C++ 브릿지 포인터 하이재킹 입구를 통과하기 위해 입력 연속성 가드 체결
+    # ❷ Implants an ingress continuity guard to satisfy the downstream Layer 1.5 C++ bridge pointer-hijacking specifications.
     if not hidden_states.is_contiguous(): [[unlikely]]
         hidden_states = hidden_states.contiguous()
 
-    # ❸ 0ns 멀티 노드 글로벌 가상 주소 MUX 패브릭 제어선 기동
+    # ❸ Dispatches the universal 0-ns multi-node virtual address MUX fabric control rails.
     torch_dispatched_out = self.fng_fabric_hardware_adapter(hidden_states, gate_logits)
     
-    # [★연속성 및 차원 무결성 교정 핵심★]
-    # .view_as 호출 시 발생할 수 있는 메모리 보폭(Stride) 뒤틀림을 방지하기 위해,
-    # 3D 기하학적 토폴로지 구조로 환원(view_as)한 직후 즉시 .contiguous() 배리어를 명시적으로 결착시킵니다.
-    # 이로 인해 후속 리니어 레이어나 고속 Triton 커널 진입 시의 메모리 단절 크래시 위험이 0%로 통제됩니다.
+    # [★ CRITICAL CONTINUITY & STRIDE LAYOUT COMPENSATOR ★]:
+    # To systematically preempt virtual memory stride distortions that often trigger during geometric reduction (view_as), 
+    # an explicit .contiguous() memory barrier is forcefully implanted immediately following the native 3D reconstruction.
+    # This guarantees that the memory fragmentation and structural rupture risks at high-speed Triton kernel entries are strictly restricted to 0%.
     final_output_3d = torch_dispatched_out.view_as(hidden_states).contiguous()
     
-    # ❹ 파이토치 Autograd 엔진이 백워드 그래디언트 체인 룰을 유실하지 않도록 펜싱을 칩니다.
+    # ❹ Implants a deterministic fencing mechanism to enforce the PyTorch Autograd engine to preserve the backward gradient chain rule flawlessly.
     if torch.is_grad_enabled() and hasattr(final_output_3d, "requires_grad_"):
         final_output_3d.requires_grad_(hidden_states.requires_grad)
         
     return final_output_3d
+
 
 
 import types
@@ -90,10 +91,10 @@ def inject_fng_fabric_infrastructure_hook(model: torch.nn.Module, adapter: FngFa
     patched_count = 0
     
     # Trace and target all sub-module hierarchical layers inside the backbone model with high precision
-    for name, module in model.named_modules():
-        # [★중복 하이재킹 방어 게이트 락★]
-        # 트리 순회 시 이미 0ns 멍키 패치가 완료된 모듈은 물리적으로 Skip 처리하여,
-        # 중복 래핑으로 인한 RecursionError 무한 재귀 패닉 요인을 원천 박멸합니다.
+       for name, module in model.named_modules():
+        # [★ CRITICAL IDEMPOTENCY LOCK AGAINST RECURSIVE HIJACKING ★]: 
+        # Sub-modules that have already completed the 0-ns monkey patch sequence are physically bypassed 
+        # during tree traversals, fundamentally eradicating infinite double-wrapping RecursionError panics.
         if getattr(module, "_fng_fabric_patched", False):
             continue
             
@@ -104,16 +105,17 @@ def inject_fng_fabric_infrastructure_hook(model: torch.nn.Module, adapter: FngFa
             # Anchor and lock the multi-node accelerator pre-frozen adapter instance inside the sub-module
             module.fng_fabric_hardware_adapter = adapter
             
-            # 원본 포워드 함수 포인터를 Fallback 대비용으로 백업 보존합니다.
+            # Safely backs up the target's original forward execution path into a persistent reference to serve as an emergency fallback route.
             module._orig_fng_forward = module.forward
             
             # Leverage types.MethodType binding to instantly swap and redirect the runtime execution function address line within 0ns
             module.forward = types.MethodType(_patched_fabric_mixtral_moe_forward, module)
             
-            # 무결성 주입 마크를 박아넣습니다.
+            # Stamps the structural integrity verification flag onto the intercepted layer object.
             module._fng_fabric_patched = True
             patched_count += 1
             print(f"   ├─ [FABRIC HOOK INJECTED] Target: {name} ({module_class_name}) ➔ MUX Fabric Applied.")
+
             
         # 2) When the DeepSeek-V3 multi-expert target is detected
         elif module_class_name in ["DeepSeekMoE", "DeepSeekSparseMoeBlock"]:
@@ -125,18 +127,20 @@ def inject_fng_fabric_infrastructure_hook(model: torch.nn.Module, adapter: FngFa
             patched_count += 1
             print(f"   ├─ [FABRIC HOOK INJECTED] Target: {name} ({module_class_name}) ➔ Macro-Expert MUX Applied.")
 
-    if patched_count == 0:
+      if patched_count == 0:
         print("   ⚠ [WARNING] No commercial MoE blocks were detected. Operating in baseline fabric bypass standby mode.")
     else:
-        # [★컴파일러 캐시 배리어 체결★]
-        # 주입이 성공한 직후 PyTorch Dynamo 컴파일러 캐시를 완전히 비워내어(Clear),
-        # 컴파일러가 구형 NCCL 그래프 사본을 참조하다가 충돌을 일으키는 현상을 원천 방어합니다.
+        # [★ CRITICAL COMPILER CACHE BARRIER ENGAGEMENT ★]: 
+        # Immediately following a successful graft, thoroughly purges PyTorch's native Dynamo compilation cache.
+        # This systematically blocks the graph-execution engine from referencing legacy NCCL communication graph replicas, 
+        # completely neutralizing runtime compiler collisions and unexpected graph breaks.
         if hasattr(torch, "_dynamo"):
             torch._dynamo.clear_compilation_cache()
             
         print(f" └─ [SUCCESS] {patched_count} Multi-Node MoE core infrastructures successfully grafted with 0ns runtime overhead.\n")
         
     return model
+
 
 
 
