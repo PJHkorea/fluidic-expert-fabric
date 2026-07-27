@@ -31,7 +31,7 @@ class MockFabricMixtralSparseMoeBlock(torch.nn.Module):
         self.num_experts = num_experts
         self.feature_dim = feature_dim
         
-        # ❶ [★정밀도 정렬 가드★] C++ 백엔드(float32)와 1:1 대응을 위한 dtype 고정
+         # ❶ [★ PRECISION ALIGNMENT GUARD ★]: Freezes the computational layout to torch.float32 to enforce strict 1:1 binary alignment with the down-stream C++ backend.
         self.gate = torch.nn.Linear(self.feature_dim, self.num_experts, bias=False, dtype=torch.float32)
         
         self.experts = torch.nn.ModuleList([
@@ -42,14 +42,14 @@ class MockFabricMixtralSparseMoeBlock(torch.nn.Module):
             ) for _ in range(self.num_experts)
         ])
         
-        # ❷ [★주입 타깃 가드★] 멍키패치(fng_fabric_monkey_patch)가 하이재킹할 필드 선언
+        # ❷ [★ INJECTION TARGET GATEWAY LOCK ★]: Explicitly instantiates the interception placeholder fields destined to be hijacked by the runtime monkey-patch code (fng_fabric_monkey_patch).
         self.fng_fabric_hardware_adapter = None
 
      def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         [🚨 ORIGINAL TRADITIONAL ROUTING]: Legacy execution path triggering severe NCCL All-to-All communication stalls.
         """
-        # [★정밀도 가드★] 입력 스트림을 백엔드 사양에 맞춰 fp32로 강제 동기화합니다.
+        # [★ PRECISION ALIGNMENT GUARD ★]: Forcibly homogenizes the incoming input stream tensors into the fp32 domain to perfectly satisfy the backend memory specifications.
         if hidden_states.dtype != torch.float32: [[unlikely]]
             hidden_states = hidden_states.to(torch.float32)
 
@@ -59,7 +59,7 @@ class MockFabricMixtralSparseMoeBlock(torch.nn.Module):
         gate_logits = self.gate(flat_hidden_states)
         routing_weights = torch.nn.functional.softmax(gate_logits, dim=-1)
         
-        # [★메모리 정렬★] 정형화된 float32 제로 버퍼 명시적 pre-allocate
+        # [★ MEMORY VIEW BLOCK ALIGNMENT ★]: Explicitly pre-allocates a standardized float32 zero buffer view, circumventing runtime allocation bubbles.
         final_output = torch.zeros_like(flat_hidden_states, dtype=torch.float32)
         for expert_idx in range(self.num_experts):
             expert_mask = (routing_weights.argmax(dim=-1) == expert_idx)
@@ -69,6 +69,7 @@ class MockFabricMixtralSparseMoeBlock(torch.nn.Module):
                 final_output[expert_mask] += expert_out * routing_weights[expert_mask, expert_idx].unsqueeze(-1)
                 
         return final_output.view(batch_size, sequence_length, hidden_dim), gate_logits
+
 
 
 # ----------------------------------------------------------------------------
@@ -94,17 +95,18 @@ def mock_fabric_core_pipeline_factory(bucket_size: int, tokens_per_expert: int):
         expert_mask = (assigned_expert_ids[None, :] == jnp.arange(NUM_EXPERTS)[:, None])
         token_positions_in_expert = jnp.cumsum(expert_mask, axis=-1) - 1
         
-        # [★컴파일러 폭파 방어★]: 추상 트레이서 단절을 막기 위해 정적 윈도우 인덱스 맵 배열을 완전히 독립 생성합니다.
+        # [★ CRITICAL COMPILER COMPONENT PROTECTION ★]: Statically instantiates an independent fixed index map layout array 
+        # to rigorously prevent abstract tracer disconnection and maintain structural continuity.
         static_index_range = jnp.arange(bucket_size)
         
-        # 실제 입력 토큰 범위 밖의 가짜 패딩 영역은 안전하게 격리 스퀄치(Squelch)합니다.
+        # Sequentially isolates and squelches out-of-boundary padding zones lying beyond actual input token scopes into a safe garbage index (bucket_size - 1).
         safe_routing_table = jnp.where(
             expert_mask & (token_positions_in_expert < tokens_per_expert) & (static_index_range[None, :] < local_tokens),
             static_index_range[None, :],
             bucket_size - 1 # Garbage Index
         )
         
-        # [★차원 일치화 교정★]: 정적 버킷 크기 명세에 정확히 부합하도록 슬라이싱 뷰포트를 제한 매핑합니다.
+        # [★ STRUCTURAL MANIFOLD ALIGNMENT ★]: Restricts and maps the slicing viewport boundaries to perfectly satisfy the static, compile-time frozen bucket size specifications.
         dispatched_expert_cache = local_token_stream[safe_routing_table[:, :tokens_per_expert]]
 
         # Intermediate MLP Computation Pass within the virtual expert execution bus
@@ -113,7 +115,8 @@ def mock_fabric_core_pipeline_factory(bucket_size: int, tokens_per_expert: int):
         # 2) Backward Atomic Scatter-Add Phase
         gating_probabilities = jax.nn.softmax(local_gate_logits, axis=-1)
         
-        # [★수치 왜곡 교정★]: 0번 엑스퍼트 확률만 중복 살포하던 버그를 지우고, 8개 전 채널의 진짜 게이팅 확률을 다중 수집합니다.
+        # [★ NUMERICAL MANIFOLD REFACTORED ★]: Excises the legacy bug that redundantly distributed the 0-th expert's probabilities alone; 
+        # deploys jnp.take_along_axis to harvest authentic gating weights across all active multi-expert communication channels concurrently.
         gathered_gating = jnp.take_along_axis(gating_probabilities.T, safe_routing_table, axis=1)
         scaled_expert_outputs = expert_outputs * gathered_gating[:, :tokens_per_expert, None]
         
@@ -124,11 +127,12 @@ def mock_fabric_core_pipeline_factory(bucket_size: int, tokens_per_expert: int):
             unique_indices=False
         )
         
-        # [★차원 파괴 교정★]: 토큰 시퀀스 축을 말살하던 jnp.mean 오버헤드를 완벽히 청소 소멸시키고,
-        # 상단 out_specs 명세와 100% 호환되는 본래의 원본 토큰 매트릭스 셰이프 그대로 정상 반환(Return)시킵니다.
+        # [★ CRITICAL TOPOLOGY LOSS COMPENSATOR ★]: Completely purges and decimates the redundant jnp.mean overhead that previously destroyed the token sequence dimension axis; 
+        # deterministically returns the raw, unmodified native token matrix shape to achieve 100% architectural compatibility with upper out_specs layouts.
         return reconstructed_stream[:local_tokens, :]
 
     return _fused_spmd_fabric_bound_pass
+
 
 
 
@@ -147,9 +151,10 @@ def run_fabric_infrastructure_e2e_test() -> None:
     print("====================================================================")
     
     # A. Setup the multi-node distributed virtual mesh topology properly aligned with the sharding tower
-    # [★축 이름 및 장치 슬라이싱 교정★]: 
-    # FngFabricShardingTower의 assert 배리어를 통과하고, 대규모 분산 축 연산의 차원 랭크가 
-    # 무결하게 추적되도록 축 명칭을 'expert_fabric'으로 일치시키고 전체 디바이스 풀을 융합합니다.
+    # [★ CRITICAL SHARDING AXIS & DEVICE SLICING ALIGNMENT ★]: 
+    # Standardizes the mesh axis identity explicitly as 'expert_fabric' and fuses the entire physical device pool, 
+    # deterministically passing the FngFabricShardingTower validation assert barriers and preserving the multi-node 
+    # dimensional tensor rank tracking loop without numerical degradation.
     devices = jax.devices()
     mock_mesh = Mesh(jnp.array(devices), ("expert_fabric",))
     print(f"[FABRIC_BOOT] Multi-Node virtual device topology mesh locked: {mock_mesh}")
@@ -162,9 +167,10 @@ def run_fabric_infrastructure_e2e_test() -> None:
     )
     
     # Load physical weights of the original commercial PyTorch layer and infiltrate with the hardware MUX fabric interlock
-    # [★정밀도 통일★] 앞서 리팩토링한 Mock 모델 명세에 맞춰 안전하게 인스턴스화 기동
+    # [★ PRECISION SEGMENT HOMOGENIZATION ★]: Safely instantiates and triggers the pipeline execution rigidly aligned with the previously refactored Mock model specifications.
     original_model = MockFabricMixtralSparseMoeBlock(num_experts=NUM_EXPERTS, feature_dim=FEATURE_DIM).cuda()
     hooked_model = inject_fng_fabric_infrastructure_hook(original_model, fng_adapter)
+
 
     # C. Validate via mathematical-analytic firewall auditing under variable token stream scenarios
     # Ingest volatile odd token footprints and bucket boundary variant vector scenarios that typically trigger severe compiler stalls
@@ -178,23 +184,23 @@ def run_fabric_infrastructure_e2e_test() -> None:
     for step_id, actual_tokens in enumerate(dynamic_test_scenarios):
         print(f"\n[SCENARIO {step_id + 1}] Dynamic Token Inflow Stream Size: {actual_tokens:3d}")
         
-        # [★정밀도 가드★] 하부 C++ 포인터 인터페이스 규격(float32)에 매칭하여 난수 스트림 생성
+               # [★ PRECISION ALIGNMENT GUARD ★]: Generates the random input stream strictly mapped to torch.float32 to satisfy the down-stream C++ pointer interface specifications.
         x_input = torch.randn(1, actual_tokens, FEATURE_DIM, device="cuda", dtype=torch.float32, requires_grad=True)
         
         # 1) [FORWARD PASS]: Profile 0ns routing latency and geometric topology restoration integrity
-        # [★정밀 프로파일링 펜싱★] 순수 비동기 디바이스 가속 큐 연산만 엄밀하게 타임 마킹하기 위해
-        # 호스트 스레드 배리어를 동기화하여 파이썬 오버헤드 버블을 격리합니다.
+        # [★ BLOCKING PERFORMANCE ISOLATION FENCING ★]: Synchronizes the host thread barrier to thoroughly isolate Python host-side overhead bubbles, 
+        # ensuring only the pure, asynchronous device acceleration queue operations are deterministically timestamped.
         torch.cuda.synchronize()
         start_forward = time.perf_counter()
         
         # [🔒 MANDATORY TUPLE UNPACKING FOR MONKEY-PATCH COMPLIANCE]
         y_output, _ = hooked_model(x_input.squeeze(0))
         
-        # 하드웨어 스트림 버스가 연산을 완전히 끝마칠 때까지 CPU 클럭 대기
+        # CPU clock blocking synchronize wait until the hardware stream bus fully completes execution loops.
         torch.cuda.synchronize()
         end_forward = time.perf_counter()
 
-               # [🛡️ TOPOLOGY GUARDRAIL]: Assert verification to guarantee the output dimension of the contracted manifold layout restores perfectly.
+        # [🛡️ TOPOLOGY GUARDRAIL]: Assert verification to guarantee the output dimension of the contracted manifold layout restores perfectly.
         assert y_output.shape == (actual_tokens, FEATURE_DIM), \
             f"[🚨 CONFIG MISMATCH] Fabric Output shape {y_output.shape} collapsed. Hardware topology parity broken."
         
@@ -204,16 +210,16 @@ def run_fabric_infrastructure_e2e_test() -> None:
         # 2) [BACKWARD PASS]: Audit the adiabatic backpropagation tunnel for zero-leak and valid gradient activation
         fake_loss = y_output.sum()
         
-        # [★정밀 프로파일링 펜싱★] 비동기 하드웨어 백워드 스트림 큐의 소모 완료를 강제 결착하여
-        # 파이썬 호스트 단의 타이밍 왜곡 버블을 전면 제거합니다.
+        # [★ BLOCKING PERFORMANCE ISOLATION FENCING ★]: Forcibly locks the completion boundary of the asynchronous hardware backward stream queue, 
+        # completely eradicating Python host-side timing distortion and measurement artifacts.
         torch.cuda.synchronize()
         start_backward = time.perf_counter()
         fake_loss.backward()
         
-        # 하드웨어 디바이스 커널과 Atomic 가산 유닛 연산이 완전히 마감될 때까지 대기
+        # Blocking synchronize wait until the hardware device kernels and Atomic Scatter-Add unit processing are thoroughly finalized.
         torch.cuda.synchronize()
         end_backward = time.perf_counter()
-        
+
         # [🛡️ GRADIENT BLOWOUT GATE]: Monitor the error backpropagation path to trap any 1-bit leak of volatile NaN/Inf numerical explosion.
         assert not torch.isnan(x_input.grad).any(), \
             f"[🚨 AUTOGRAD EXPLOSION] Volatile NaN leaked into Fabric input gradients at window {actual_tokens}."
