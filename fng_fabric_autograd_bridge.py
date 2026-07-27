@@ -48,8 +48,9 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         ctx.tokens_per_expert = tokens_per_expert
 
         # [🔒 0-COPY INTER-FRAMEWORK INGESTION]: Achieve absolute zero copy-latency through Safe DLPack standard bindings.
-        # [★GC 방어 핵심★] DLPack 캡슐 객체들을 임시 인자가 아닌 명시적 로컬 변수(capsule_*)로 단단히 결착(Pinning)하여,
-        # 하부 가속기 비동기 분산 연산이 완전히 완결될 때까지 하드웨어 64비트 메모리 주소선이 강제 회수당하는 크래시를 원천 차단합니다.
+        # [★ CRITICAL GC DEFENSE PINNING ★]: Bind DLPack capsule entities explicitly as local variables (capsule_*) rather than passing them as transient arguments.
+        # This rigorously enforces memory pinning, preventing the Python Garbage Collector from prematurely reclaiming the active 64-bit hardware 
+        # virtual memory address pointers before the underlying asynchronous distributed accelerator execution fully resolves.
         capsule_tokens = to_dlpack(hidden_states)
         capsule_logits = to_dlpack(gate_logits)
         
@@ -68,12 +69,13 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         ctx.fabric_vjp_fn = fabric_vjp_fn
         ctx.save_for_backward(hidden_states, gate_logits)
 
-        # [★출력 캡슐 안전 격리★] JAX의 가속 완료 어레이 결과를 파이토치 레일로 토스할 때도 
-        # 가상 캡슐 핸들(capsule_out)의 스코프 보존선을 구축하여 비동기 데이터 오염 및 누수를 완벽히 청소합니다.
+        # [★ SECURE OUTPUT CAPSULE ISOLATION ★]: Establishes a persistent life-cycle boundary for the virtual capsule handle (capsule_out) 
+        # when transferring JAX's accelerated tensor arrays back into the PyTorch runtime rails, systematically neutralizing asynchronous data corruption and memory leak vectors.
         capsule_out = jax_to_dlpack(jax_outputs)
         torch_outputs = from_dlpack(capsule_out)
         
-        # 파이토치 런타임 엔진이 가속 결과를 안전하게 인지하도록 이종 가속기 스트림에 소유권 연동 마크를 결착합니다.
+        # Enforces a stream ownership synchronization barrier onto the active heterogeneous accelerator queue, 
+        # ensuring the PyTorch runtime engine deterministically acknowledges the asynchronous JAX compilation results.
         torch.cuda.current_stream().record_stream(torch_outputs)
         
         return torch_outputs
@@ -100,7 +102,8 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
         tokens_per_expert = ctx.tokens_per_expert
         
         # [🔒 ZERO-COPY POINTER HIJACKING]: 
-        # [★GC 방어 및 핀 고정★] 역방향 오차 행렬의 임시 캡슐을 명시적 로컬 변수로 확보하여 가속기 비동기 VJP 연산 도중 메모리가 날아가는 것을 원천 방어합니다.
+        # [★ CRITICAL GC DEFENSE & PERSISTENT MEMORY PINNING ★]: Secures the transient backward error gradient capsules explicitly as persistent local variables. 
+        # This fundamentally barricades against virtual memory address eviction while the underlying distributed asynchronous VJP pipeline executes.
         capsule_grad_in = to_dlpack(grad_output)
         capsule_saved_logits = to_dlpack(ctx.saved_tensors[1])
         
@@ -120,15 +123,17 @@ class FngFabricAutogradBridgeFunction(torch.autograd.Function):
             )
 
         # [🛡️ LINEAR INTERCONNECT ALIGNMENT FENCE]
-        # [★반환 캡슐 안전 격리★] 복귀하는 그래디언트 데이터 역시 캡슐화 생명주기를 완벽히 고정하여 데이터 수치 오염을 원천 차단합니다.
+        # [★ SECURE RETURN CAPSULE LIFECYCLE ISOLATION ★]: Enforces an absolute life-cycle boundary for the egress gradient capsules, 
+        # systematically preempting asynchronous numerical contamination and floating-point layout distortion.
         capsule_grad_hidden = jax_to_dlpack(grad_hidden)
         capsule_grad_logits = jax_to_dlpack(grad_logits)
         
         torch_grad_hidden = from_dlpack(capsule_grad_hidden)
         torch_grad_logits = from_dlpack(capsule_grad_logits)
 
-        # [★이종 스트림 배리어 체결★]
-        # 파이토치 Autograd 엔진이 이 반환된 그래디언트를 안전하게 참조하여 가중치를 업데이트할 수 있도록 스트림 락을 결착합니다.
+        # [★ HETEROGENEOUS BACKWARD STREAM BARRIER ENGAGEMENT ★]:
+        # Implants a rigid stream synchronization barrier, ensuring the PyTorch Autograd engine deterministically references 
+        # the returned gradient manifolds to safely proceed with weight optimization routines without memory race hazards.
         current_stream = torch.cuda.current_stream()
         current_stream.record_stream(torch_grad_hidden)
         current_stream.record_stream(torch_grad_logits)
