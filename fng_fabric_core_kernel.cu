@@ -21,23 +21,20 @@ struct FabricRemoteAddressContext {
 
     // B. Transform the per-expert lane loops into completely branchless bitmask scans
     for (int e = 0; e < num_experts; ++e) {
-        bool match_flag = (target_expert == e);
-        
-        // Capture the hardware execution mask of currently active asynchronous threads inside the accelerator SM
-        unsigned int active_mask = __activemask();
-        
-        // Single-clock aggregation of target expert threads within the warp into a bitfield using the __ballot_sync intrinsic
-        unsigned int expert_bitmask = __ballot_sync(active_mask, match_flag);
-        
-        // [Prefix-Sum Scan] Filter matching bits positioned below the current execution stream (lane_id) and compute via hardware __popc count
+        bool match_flag = is_valid_token && (target_expert == e);
+        //[★ Fix] Stabilized hardware synchronization mask
+        unsigned int expert_bitmask = __ballot_sync(0xFFFFFFFF, match_flag); 
         int relative_pos = __popc(expert_bitmask & ((1U << lane_id) - 1));
-
-        // Directly detonate the PTX inline assembly conditional move instruction (selp.b32) to strictly eliminate branch misprediction (JMP) overhead.
-        int target_slot;
+        
+        // [★ Fix] Applied `selp` in compliance with the 1-bit predicate specification.
         asm volatile (
-            "selp.b32 %0, %1, %2, %3;"
+            "{\n\t"
+            "  .reg .pred %p;\n\t"
+            "  setp.ne.u32 %p, %3, 0;\n\t" // 0이 아니면 %p는 true
+            "  selp.b32 %0, %1, %2, %p;\n\t"
+            "}"
             : "=r"(target_slot)
-            : "r"(relative_pos), "r"(GARBAGE_IDX), "b"(match_flag)
+            : "r"(relative_pos), "r"(GARBAGE_IDX), "r"((unsigned int)match_flag)
         );
 
 
