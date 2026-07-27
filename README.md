@@ -132,8 +132,6 @@ from jax.sharding import Mesh
 import torch
 from transformers import AutoModelForCausalLM
 
-# [★임포트 경로 교정★]: setup.py 패키징 통합 네임스페이스 명세에 무결하게 부합하도록 
-# absolute import 타깃 주소선을 정밀하게 정렬하여 모듈 누락 오탐지를 원천 차단합니다.
 from fluidic_expert_fabric import (
     FngFabricShardingTower,
     FngFabricDynamicShapeAdapter,
