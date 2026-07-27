@@ -61,21 +61,22 @@ class FngFabricDynamicShapeAdapter:
 
 
 
-        def inject_fabric_dynamic_pass(self, hidden_states: torch.Tensor, gate_logits: torch.Tensor) -> torch.Tensor:
+            def inject_fabric_dynamic_pass(self, hidden_states: torch.Tensor, gate_logits: torch.Tensor) -> torch.Tensor:
         """
         [📢 MICRO-INFRASTRUCTURE RUNTIME ENTRANCE]
         Variable stream ingestion ➔ Static padding & negative vacuum masking ➔ Zero-copy cutback return pipeline.
         """
+        # [★Added] Data type alignment guard: Aligned with C++ backend fp32 specifications.
+        if hidden_states.dtype != torch.float32: [[unlikely]]
+            hidden_states = hidden_states.to(torch.float32)
+        if gate_logits.dtype != torch.float32: [[unlikely]]
+            gate_logits = gate_logits.to(torch.float32)
+
         actual_tokens = hidden_states.size(0)
         target_bucket_size = self._find_optimal_fabric_bucket(actual_tokens)
         pad_size = target_bucket_size - actual_tokens
 
         # [🛡️ ALGEBRAIC VACUUM MASKING HARDWARE FIREWALL]
-        # Executes physical memory padding by filling empty padding regions with pure zero (0.0) 
-        # and forcing the gating logits axis into an extreme negative vacuum (-1e9) state.
-        # This guarantees that the underlying CUDA kernel's __argmax stream allocates exactly 0% 
-        # of the padding zones to active expert resources, fully automated to derail and isolate 
-        # those streams into a secure dummy memory address zone (GARBAGE_IDX).
         if pad_size > 0:
             hidden_states_padded = torch.nn.functional.pad(hidden_states, (0, 0, 0, pad_size), value=0.0)
             gate_logits_padded = torch.nn.functional.pad(gate_logits, (0, 0, 0, pad_size), value=-1e9)
@@ -83,23 +84,15 @@ class FngFabricDynamicShapeAdapter:
             hidden_states_padded = hidden_states
             gate_logits_padded = gate_logits
 
-        # Instantly ignite runtime execution kernel address switching and hot-swapping 
-        # within 0ns from the pre-baked permanent frozen registry.
         matched_bridge_runner = self.fabric_bucket_registry[target_bucket_size]
         torch_combined_padded = matched_bridge_runner(hidden_states_padded, gate_logits_padded)
 
         # [🔒 ZERO-COPY VIRTUAL SLICING VIEW]
-        # Reclaims the original virtual pointer and slices away dummy fields 
-        # from the processed padding manifold with an absolute 0-byte memory copy cost.
+        # [★fix★] Automatic lifecycle linkage via PyTorch's built-in slicing; elimination of manual reference management.
         torch_final_out = torch_combined_padded[:actual_tokens, :]
-        
-        # [🛡️ ASYNC LIFE-CYCLE GC INSULATION]
-        # Intercepts and shields against accelerator stream memory corruption failures 
-        # triggered when the asynchronous Garbage Collector (GC) prematurely deallocates the underlying hardware base address lines mid-queue.
-        if hasattr(torch_combined_padded, "_source_tensors"):
-            torch_final_out._source_tensors = torch_combined_padded._source_tensors
 
         return torch_final_out
+
 
     def __call__(self, hidden_states: torch.Tensor, gate_logits: torch.Tensor) -> torch.Tensor:
         """
