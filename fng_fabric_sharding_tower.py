@@ -34,18 +34,18 @@ class FngFabricShardingTower:
             if ptr % FABRIC_ALIGNMENT_BYTES != 0:
                 raise MemoryError(f"[🚨 ALIGNMENT FAILURE] Pointer {hex(ptr)} violates alignment specification.")
 
-        # 1. 셰이프 레이아웃 명세로부터 각 분산 장치가 책임질 로컬 조각(Shard)의 셰이프 크기를 추정합니다.
-        # expert_sharding 명세(P("expert_fabric", None, None))에 의해 0번 축(Num_Experts)만 장치 개수만큼 분할됩니다.
+        # 1. Estimates the local shard shape dimensions responsible for each distributed device based on the global shape layout specifications.
+        # Guided by the expert_sharding spec (P("expert_fabric", None, None)), only the 0-th axis (Num_Experts) is partitioned across the total device count.
         num_devices = self.mesh.shape["expert_fabric"]
         local_shard_shape = (shape_layout[0] // num_devices,) + shape_layout[1:]
 
-        # [★무복사 결착 핵심★] 
-        # 장치별 메모리 할당자 버블(jnp.zeros) 생성을 완전히 금지합니다.
-        # 대신, JAX의 make_array_from_callback 구조가 요구하는 장치별 로컬 슬라이스(index) 규격을 추적하여,
-        # 실물 가속기 VRAM 내부 가상 주소선이 매핑된 빈 주소 공간(Tracer Array Slot)만 오버헤드 0ns로 정렬하여 결합합니다.
+        # [★ ZERO-COPY LIFECYCLE MEMORY PINNING KEY ★]: 
+        # Device-side physical memory allocator bubbles (such as jnp.zeros allocations) are strictly prohibited.
+        # Instead, by tracking the device-local slice boundaries (index) demanded by JAX's native make_array_from_callback architecture, 
+        # it aligns and couples only the empty address spaces (Tracer Array Slots) mapped to the accelerator's virtual memory lines with absolute 0-ns overhead.
         def _fetch_node_local_slice_callback(index: Tuple[slice, ...]) -> jnp.ndarray:
-            # 컴파일러가 요구하는 로컬 조각의 인덱스 영역(Index bounds)에 동기화된 
-            # 순수 가상 배열(Uninitialized/Tracer View)만 64비트 주소선 가드로 바인딩하여 리턴합니다.
+            # Binds and returns a pure virtual array manifold (Uninitialized / Tracer View) rigidly synchronized 
+            # with the compiler-requested local shard index bounds, protected via 64-bit hardware address guards.
             return jax.lax.alloc_abstract_array(jnp.float32, local_shard_shape)
 
         # Emit the virtualization array plane with zero memory copy cost
@@ -55,6 +55,7 @@ class FngFabricShardingTower:
             _fetch_node_local_slice_callback
         )
         return sharded_global_manifold
+
 
 
             def parallel_fabric_dispatch_routing(
@@ -73,13 +74,13 @@ class FngFabricShardingTower:
         from jax.experimental.shard_map import shard_map
 
         # [🛡️ TOPOLOGY HARD-LOCKING]: 
-        # 하단 C++/CUDA 백엔드가 연산 처리 후 밷어내는 [Num_Experts, Tokens_Per_Expert, Feature_Dim]의 
-        # 물리 격자 레이아웃 구조와 JAX 분산 컴파일러의 out_specs 차원 정의를 완벽하게 직렬 정렬합니다.
-        # "expert_fabric" 축은 0번 차원(Num_Experts)에 유기적으로 고정 결착됩니다.
+        # Linearly aligns the out_specs dimensional definitions of the JAX distributed compiler with the raw physical lattice layout 
+        # [Num_Experts, Tokens_Per_Expert, Feature_Dim] emitted by the downstream C++/CUDA backend following computation.
+        # The "expert_fabric" axis is organically locked and pinned directly onto the 0-th dimension (Num_Experts).
         @shard_map(
             mesh=self.mesh,
             in_specs=(P("data_parallel", None), P("data_parallel", None)),
-            out_specs=P("expert_fabric", None, None) # [★교정★] 3D 출력 매니폴드 셰이프 규격 일치화
+            out_specs=P("expert_fabric", None, None) # [★ ALIGNED ★]: Unifies the 3D output manifold shape specifications.
         )
         def _fused_spmd_fabric_dispatch_pass(
             local_token_stream: jax.Array,   # Sharded Shape: [Local_Tokens, Feature_Dim]
@@ -90,9 +91,11 @@ class FngFabricShardingTower:
             Entered the local compute context for each distributed accelerator node.
             Dissolves Python-level copy overhead and forms an exclusive, highly-optimized XLA compiler graph.
             """
-            # [★교정★] 정적 HLO 그래프 빌드 유도를 위해, 로컬 토큰의 크기를 파이썬 일반 동적 변수가 아닌 
-            # XLA 컴파일러 가드 영역 내에서 안전하게 추적되는 상수로 인식되도록 정적 셰이프 디스패치 구조를 적용합니다.
+            # [★ COMPILER REFACTORED ★]: To induce static HLO graph construction, applies a static shape dispatch architecture.
+            # This forces the local token size to be recognized as an immutable compile-time constant rather than a volatile Python runtime variable, 
+            # safely preserving tracker continuity inside the XLA compiler guard domain.
             local_tokens = local_token_stream.shape[0]
+
 
     
         from fng_fabric_config import NUM_EXPERTS
@@ -104,11 +107,11 @@ class FngFabricShardingTower:
         # 2) Prefix-Sum Hardware Mapping: Branchless tensor indexing with strict physical safety bounds
         token_positions = jnp.cumsum(expert_mask, axis=-1) - 1
         
-        # [★컴파일러 폭파 방어 핵심★]: 동적 변수 local_tokens 대신, 컴파일 타임에 고정된 정적 윈도우 스펙(bucket_size)을
-        # 기반으로 하여 jnp.arange를 전개함으로써 XLA ConcretizationTypeError를 원천 차단합니다.
+        # [★ CRITICAL COMPILER COMPONENT PROTECTION ★]: Deploys jnp.arange extraction based on the static, compile-time frozen 
+        # window specification (bucket_size) instead of the volatile runtime variable local_tokens, fundamentally preempting XLA ConcretizationTypeError vectors.
         static_index_range = jnp.arange(bucket_size)
         
-        # 실제 입력 토큰 범위 밖의 패딩 영역은 안전한 가짜 인덱스(bucket_size - 1)로 격리 스퀄치(Squelch)합니다.
+        # Sequentially isolates and squelches out-of-boundary padding zones lying beyond actual input token scopes into a safe garbage index (bucket_size - 1).
         safe_routing_table = jnp.where(
             expert_mask & (token_positions < tokens_per_expert) & (static_index_range[None, :] < local_tokens),
             static_index_range[None, :],
@@ -116,14 +119,15 @@ class FngFabricShardingTower:
         )
 
         # 3) Zero-Copy Static Window Dispatch: 
-        # [★차원 일치화 교정★]: 가변 크기의 데이터를 참조하는 것이 아니라, 정적 패딩이 완료된 hidden_states 버퍼로부터
-        # 딱 정해진 tokens_per_expert 스펙만큼만 슬라이싱 추출(Static View Window)하여 out_specs 명세와 100% 일치시킵니다.
-        # 이로 인해 가속기 로컬 VRAM 내부 데이터 구조가 [Num_Experts, tokens_per_expert, Feature_Dim]으로 단단하게 동결됩니다.
+        # [★ STRUCTURAL MANIFOLD ALIGNMENT ★]: Rather than indexing variable-sized runtime tensor allocations, 
+        # surgically extracts a static view window of precisely tokens_per_expert configurations from the pre-padded hidden_states buffer, 
+        # achieving 100% architectural alignment with out_specs layout templates.
+        # This rigidly freezes the internal local accelerator VRAM data topology down to [Num_Experts, tokens_per_expert, Feature_Dim].
         dispatched_expert_cache = local_token_stream[safe_routing_table[:, :tokens_per_expert]]
 
         return dispatched_expert_cache
 
-               # ----------------------------------------------------------------------------
+        # ----------------------------------------------------------------------------
         # 4) Enter Global Distributed Control Plane & Detonate Async Execution Fence
         # ----------------------------------------------------------------------------
         # Instantly ignite the established ShardMap distributed execution trace straight into the global virtual fabric context plane.
@@ -132,15 +136,15 @@ class FngFabricShardingTower:
             global_gate_logits
         )
 
-        # [★교정★] 호스트와 가속기 스트림을 강제로 멈추던 block_until_ready() 오버헤드를 전면 제거합니다.
-        # 하단 Layer 1.5 C++ 가드와 파이토치 record_stream 배리어가 수명주기를 완벽히 통제하므로, 
-        # CPU 블로킹을 완전히 0ns로 해방하여 완전한 비동기 멀티 스트림 가속 파이프라인을 달성합니다.
+               # [★ COMPILER OVERHEAD EXCLUSION ★]: Completely eradicates the heavy block_until_ready() overhead that forcibly stalls the host and accelerator stream pipelines.
+        # Since the downstream Layer 1.5 C++ guards and PyTorch record_stream barriers rigidly govern the active memory lifecycle,
+        # CPU blocking latencies are fully liberated down to absolute 0-ns, achieving an unmanaged, asynchronous multi-stream acceleration pipeline.
         return global_dispatched_manifold
 
 
     def parallel_fabric_combine_routing(
         self,
-        global_expert_outputs: jax.Array,   # Shape: [Num_Experts, tokens_per_expert, Feature_Dim] <- [★교정] 정적 윈도우 스펙 반영
+        global_expert_outputs: jax.Array,   # Shape: [Num_Experts, tokens_per_expert, Feature_Dim] <- [★ ALIGNED ★]: Reflects static view window specifications.
         global_gate_logits: jax.Array,      # Shape: [Global_Total_Tokens, Num_Experts]
         bucket_size: int,
         tokens_per_expert: int
@@ -153,28 +157,29 @@ class FngFabricShardingTower:
         from jax.experimental.shard_map import shard_map
 
         # [🛡️ MIRROR-SYMMETRIC SHARDING LOCK]: 
-        # 입력받는 distributed expert fabric 축 명세를 하단 C++ 완제품 바이너리가 밷어내는 
-        # [Num_Experts, tokens_per_expert, Feature_Dim]의 3D 차원 레일 배정에 정확히 일치시킵니다.
-        # "expert_fabric" 축은 0번 차원(Num_Experts)에 견고하게 매핑됩니다.
+        # Linearly aligns the incoming distributed expert fabric axis specifications with the 3D dimensional rail allocations 
+        # [Num_Experts, tokens_per_expert, Feature_Dim] emitted by the downstream C++ binary wrapper.
+        # The "expert_fabric" axis is rigidly locked and mapped directly onto the 0-th dimension (Num_Experts).
 
-       
-              # [🛡️ MIRROR-SYMMETRIC SHARDING LOCK]
-        # 순방향 디스패치와 완벽한 대칭 거울 구조를 형성하도록 입력 분산 명세를 직렬화합니다.
-        # "expert_fabric" 축은 0번 차원(Num_Experts)에 고정 결착됩니다.
+        # [🛡️ MIRROR-SYMMETRIC SHARDING LOCK]
+        # Serializes the input distribution specifications to forge a flawless mirror-symmetric topology with the forward dispatch pathway.
+        # The "expert_fabric" axis is organically pinned and fixed directly onto the 0-th dimension (Num_Experts).
         @shard_map(
             mesh=self.mesh,
-            in_specs=(P("expert_fabric", None, None), P("data_parallel", None)), # [★교정★] 3D 입력 매니폴드 스펙 정렬
+            in_specs=(P("expert_fabric", None, None), P("data_parallel", None)), # [★ ALIGNED ★]: Unifies the 3D input manifold shape specifications.
             out_specs=P("data_parallel", None)
         )
         def _fused_spmd_fabric_combine_pass(
-            local_expert_outputs: jax.Array,  # Sharded Shape: [Num_Experts, tokens_per_expert, Feature_Dim] <- [★교정] 정적 크기 일치화
+            local_expert_outputs: jax.Array,  # Sharded Shape: [Num_Experts, tokens_per_expert, Feature_Dim] <- [★ ALIGNED ★]: Enforces static size mapping constraints.
             local_gate_logits: jax.Array      # Sharded Shape: [Local_Tokens, Num_Experts]
         ) -> jax.Array:
             """
             [💥 CONCURRENT ADIABATIC GRAVITATION RUNTIME]
             """
-            # [★교정★] 정적 HLO 그래프 트레이싱 유도를 위해 컴파일러 가드 영역 내부 상수 축으로 인지시킵니다.
+            # [★ COMPILER REFACTORED ★]: To induce static HLO graph tracing, forces the local token size to be recognized 
+            # as an immutable compile-time constant axis within the XLA compiler guard domain.
             local_tokens = local_gate_logits.shape[0]
+
 
             # ----------------------------------------------------------------------------
             # 1) Reverse Branchless Offsetting Phase
@@ -183,47 +188,49 @@ class FngFabricShardingTower:
             expert_mask = (assigned_expert_ids[None, :] == jnp.arange(NUM_EXPERTS)[:, None])
             token_positions = jnp.cumsum(expert_mask, axis=-1) - 1
             
-            # [★컴파일러 폭파 방어 핵심★]
-            # 동적 변수 대신 컴파일 타임에 동결된 정적 윈도우 스펙(bucket_size)을 기반으로 jnp.arange를 빌드하여
-            # XLA ConcretizationTypeError를 원천 차단하고 순방향 패스와 완벽한 수학적 대칭성을 회복합니다.
+            # [★ CRITICAL COMPILER COMPONENT PROTECTION ★]: Builds jnp.arange natively from the compile-time frozen static window 
+            # specification (bucket_size) instead of volatile dynamic variables, fundamentally precluding XLA ConcretizationTypeError vectors 
+            # and fully restoring perfect mathematical symmetry with the forward dispatch pathway.
             static_index_range = jnp.arange(bucket_size)
             
             # Reconstruct the static register grid address line offset with absolute symmetry to the forward dispatch path
-            # 가짜 패딩 영역은 데이터 오염을 막기 위해 정적 버킷 크기의 바깥쪽 경계(bucket_size - 1)로 완전히 격리(Squelch)합니다.
+            # Sequentially squelches and isolates out-of-boundary padding zones into the outer edge of the static bucket configuration (bucket_size - 1) 
+            # to strictly safeguard against down-stream memory and data corruption.
             safe_routing_table = jnp.where(
                 expert_mask & (token_positions < tokens_per_expert) & (static_index_range[None, :] < local_tokens),
                 static_index_range[None, :],
                 bucket_size - 1 # Garbage Index Bin
             )
 
-                     # ----------------------------------------------------------------------------
+            # ----------------------------------------------------------------------------
             # 2) Softmax Gating Allocation Phase
             # ----------------------------------------------------------------------------
             gating_probabilities = jax.nn.softmax(local_gate_logits, axis=-1)
             
-            # [★수치 왜곡 교정★]: 0번 엑스퍼트의 주소선만 슬라이싱하던 safe_routing_table[0]을 도려냅니다.
-            # 8개 엑스퍼트 전체의 고유 라우팅 매트릭스 차원을 손실 없이 매핑하기 위해 jnp.take_along_axis를 적용,
-            # 각 토큰이 자신이 할당받은 진짜 엑스퍼트 레일의 게이팅 확률 가중치를 무결하게 흡수하도록 정렬합니다.
+            # [★ NUMERICAL MANIFOLD REFACTORED ★]: Excises the legacy safe_routing_table[0] slicing that incorrectly isolated the 0-th expert's address lines alone.
+            # To map the multi-expert sovereign routing dimensional matrix seamlessly without layout loss, applies jnp.take_along_axis.
+            # This aligns each token to flawlessly absorb its deterministic gating probability weights from its uniquely assigned native expert rails.
             gathered_gating = jnp.take_along_axis(gating_probabilities.T, safe_routing_table, axis=1)
             scaled_expert_outputs = local_expert_outputs * gathered_gating[:, :tokens_per_expert, None]
 
             # ----------------------------------------------------------------------------
             # 3) Bare-Metal Atomic Scatter-Add Phase
             # ----------------------------------------------------------------------------
-            # 컴파일러 정적 윈도우 스펙(bucket_size)에 맞춰 베이스 스트림 공간 할당
+            # Allocates the core base execution stream space rigidly conforming to the static compiler window layout (bucket_size).
             reconstructed_stream = jnp.zeros((bucket_size, FEATURE_DIM), dtype=jnp.float32)
             
-             # [💥 HARDWARE ATOMIC PRIMITIVE MAPPING]
+            # [💥 HARDWARE ATOMIC PRIMITIVE MAPPING]: 
             reconstructed_stream = reconstructed_stream.at[safe_routing_table[:, :tokens_per_expert]].add(
                 scaled_expert_outputs,
-                unique_indices=False  # 하드웨어 실리콘 레벨의 atomicAdd() 기계 명령어 직결 강제
+                unique_indices=False  # Forcibly links directly onto hardware silicon-level native atomicAdd() machine instruction execution paths.
             )
 
-            # [★최종 마감 교정★]: 이중 인덱싱 노이즈([0])를 지워내고 
-            # 컴파일러가 인식하는 정적 토큰 개수(local_tokens) 지점까지 정밀하게 슬라이싱 뷰포트를 복원합니다.
+            # [★ COMPILER REGISTRATION FINALIZATION ★]: Thoroughly strips away double-indexing noise ([0]), 
+            # restoring the precision slicing viewport layout exactly matching the static token limits (local_tokens) recognized by the compiler parser.
             return reconstructed_stream[:local_tokens, :]
 
-        # ----------------------------------------------------------------------------
+
+              # ----------------------------------------------------------------------------
         # 4) Engage Global Distributed Backward Combine Plane
         # ----------------------------------------------------------------------------
         # Instantly ignite the established ShardMap distributed execution trace.
@@ -232,8 +239,8 @@ class FngFabricShardingTower:
             global_gate_logits
         )
 
-        # [★교정★] 가속기 파이프라인 스케줄러를 마비시키던 block_until_ready() 오버헤드를 전면 제거합니다.
-        # CPU 블로킹 오버헤드를 완전히 0ns로 해방하여 완전한 비동기 분산 가속 파이프라인을 달성합니다.
+        # [★ COMPILER OVERHEAD EXCLUSION ★]: Completely eradicates the heavy block_until_ready() overhead that forcibly stalls the host and accelerator stream pipelines.
+        # CPU blocking latencies are fully liberated down to absolute 0-ns, achieving an unmanaged, asynchronous multi-stream distributed acceleration pipeline.
         return global_reconstructed_stream
 
 print("====================================================================")
