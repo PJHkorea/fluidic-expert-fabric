@@ -213,16 +213,15 @@ class FngFabricShardingTower:
             # 컴파일러 정적 윈도우 스펙(bucket_size)에 맞춰 베이스 스트림 공간 할당
             reconstructed_stream = jnp.zeros((bucket_size, FEATURE_DIM), dtype=jnp.float32)
             
-            # [💥 HARDWARE ATOMIC PRIMITIVE MAPPING]
+             # [💥 HARDWARE ATOMIC PRIMITIVE MAPPING]
             reconstructed_stream = reconstructed_stream.at[safe_routing_table[:, :tokens_per_expert]].add(
                 scaled_expert_outputs,
                 unique_indices=False  # 하드웨어 실리콘 레벨의 atomicAdd() 기계 명령어 직결 강제
             )
 
-            # [★차원 파괴 교정★]: 토큰 시퀀스 축을 뭉개버리던 jnp.mean(..., axis=0) 독소를 완벽히 소멸시킵니다.
-            # 정적 패딩 윈도우(bucket_size) 영역에서 가짜 더미 영역을 도려내고, 상단 out_specs=[Local_Tokens, Feature_Dim] 명세와
-            # 100% 일치하는 깨끗한 원본 토큰 매트릭스 구조 그대로 복귀(Return Mapping)시킵니다.
-            return reconstructed_stream[:local_tokens[0], :]
+            # [★최종 마감 교정★]: 이중 인덱싱 노이즈([0])를 지워내고 
+            # 컴파일러가 인식하는 정적 토큰 개수(local_tokens) 지점까지 정밀하게 슬라이싱 뷰포트를 복원합니다.
+            return reconstructed_stream[:local_tokens, :]
 
         # ----------------------------------------------------------------------------
         # 4) Engage Global Distributed Backward Combine Plane
