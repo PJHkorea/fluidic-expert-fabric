@@ -1,6 +1,6 @@
 # fluidic-expert-fabric (PoC)
 
-This repository contains an exploratory Proof of Concept (PoC) investigating a hardware-software co-design approach for distributed Mixture-of-Experts (MoE) architectures, such as DeepSeek-V3 and Mixtral-8x7B. This project represents a humble attempt to re-examine traditional interconnect bandwidth limitations by gently bridging remote RDMA (RoCEv2) virtual address lines with multi-axis `jax.shard_map` and `jax.sharding.NamedSharding` structures.
+This repository contains an exploratory Proof of Concept (PoC) investigating a hardware-software co-design approach for distributed Mixture-of-Experts (MoE) architectures, such as DeepSeek-V3 and Mixtral-8x7B. This project represents a modest attempt to re-examine traditional interconnect bandwidth limitations by directly bridging remote RDMA (RoCEv2) virtual address lines with multi-axis jax.shard_map and jax.sharding.NamedSharding structures.
 
 By experimenting with 64-bit virtual memory address pointer mapping across multi-node environments, we hope to investigate methods for minimizing legacy inter-node data replication (`memcpy`) overheads, mitigating NCCL All-to-All communication stalls, and safely preserving numerical homeostasis during distributed parameter dispatch and gradient accumulation stages without introducing dynamic allocation bubbles.
 
